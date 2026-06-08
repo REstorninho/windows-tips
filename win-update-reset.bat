@@ -1,5 +1,5 @@
 @echo off
-Windows Update Repair Tool
+title Windows Update Repair Tool
 color 0A
 echo ====================================
 echo Windows Update Repair Tool
