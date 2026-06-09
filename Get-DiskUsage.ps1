@@ -103,6 +103,153 @@ function Get-DirectChildrenSizes {
 }
 
 # ══════════════════════════════════════════════════════════════════
+#  FUNÇÃO DE ELIMINAÇÃO COM CONFIRMAÇÃO
+# ══════════════════════════════════════════════════════════════════
+
+function Invoke-DeleteConfirmation {
+    param([PSCustomObject]$Item)
+
+    $w = [Console]::WindowWidth
+    if ($w -lt 80) { $w = 80 }
+
+    # ── Proteção contra paths de sistema críticos ──────────────────
+    $protectedPaths = @(
+        "$env:SystemRoot",                          # C:\Windows
+        "$env:SystemRoot\System32",
+        "$env:SystemRoot\SysWOW64",
+        "$env:ProgramFiles",
+        "${env:ProgramFiles(x86)}",
+        "$env:ProgramData",
+        "$env:SystemDrive\",                        # C:\
+        "$env:USERPROFILE",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA"
+    )
+
+    foreach ($p in $protectedPaths) {
+        if ($p -and $Item.FullPath.TrimEnd('\') -ieq $p.TrimEnd('\')) {
+            [Console]::Clear()
+            Write-Host ""
+            Write-Host ("  " + "═" * ($w - 4)) -ForegroundColor Red
+            Write-Host "  ⛔  ELIMINAÇÃO BLOQUEADA" -ForegroundColor Red
+            Write-Host ("  " + "═" * ($w - 4)) -ForegroundColor Red
+            Write-Host ""
+            Write-Host ("  O caminho '{0}' é uma localização de sistema protegida." -f $Item.FullPath) -ForegroundColor Yellow
+            Write-Host "  Este script não permite eliminar directorias críticas do Windows." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  Prima qualquer tecla para voltar..." -ForegroundColor DarkGray
+            [Console]::ReadKey($true) | Out-Null
+            return $false
+        }
+    }
+
+    # ── Ecrã de confirmação — nível 1 ─────────────────────────────
+    [Console]::Clear()
+    $typeLabel = if ($Item.IsDir) { "PASTA" } else { "FICHEIRO" }
+    $icon      = if ($Item.IsDir) { "📁" } else { "📄" }
+
+    Write-Host ""
+    Write-Host ("  " + "═" * ($w - 4)) -ForegroundColor Red
+    Write-Host ("  ⚠   CONFIRMAR ELIMINAÇÃO DE $typeLabel") -ForegroundColor Red
+    Write-Host ("  " + "═" * ($w - 4)) -ForegroundColor Red
+    Write-Host ""
+    Write-Host ("  $icon  Nome     : {0}" -f $Item.Name) -ForegroundColor White
+    Write-Host ("      Caminho  : {0}" -f $Item.FullPath) -ForegroundColor White
+    Write-Host ("      Tamanho  : {0}" -f (Format-Size $Item.SizeBytes)) -ForegroundColor Yellow
+
+    if ($Item.IsDir) {
+        # Conta itens dentro da pasta
+        try {
+            $childCount = (Get-ChildItem -LiteralPath $Item.FullPath -Recurse -Force -ErrorAction SilentlyContinue).Count
+            Write-Host ("      Conteúdo : {0} item(ns) no total (incluindo subpastas)" -f $childCount) -ForegroundColor Yellow
+        } catch { }
+        Write-Host ""
+        Write-Host "  ⚠  ATENÇÃO: Esta operação eliminará a pasta e TODO o seu conteúdo!" -ForegroundColor Red
+    }
+
+    Write-Host ""
+    Write-Host ("  " + "─" * ($w - 4)) -ForegroundColor DarkGray
+    Write-Host "  Tem a certeza que quer eliminar? Escreva  SIM  e prima ENTER para confirmar." -ForegroundColor White
+    Write-Host "  (qualquer outra entrada cancela a operação)" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  > " -ForegroundColor Yellow -NoNewline
+
+    [Console]::CursorVisible = $true
+    $resposta = Read-Host
+    [Console]::CursorVisible = $false
+
+    if ($resposta.Trim() -ne "SIM") {
+        [Console]::Clear()
+        Write-Host ""
+        Write-Host "  ✔  Operação cancelada. Nenhum ficheiro foi eliminado." -ForegroundColor Green
+        Write-Host ""
+        Start-Sleep -Milliseconds 1200
+        return $false
+    }
+
+    # ── Ecrã de confirmação — nível 2 (segunda barreira) ──────────
+    [Console]::Clear()
+    Write-Host ""
+    Write-Host ("  " + "═" * ($w - 4)) -ForegroundColor Red
+    Write-Host "  🔴  CONFIRMAÇÃO FINAL — ESTA AÇÃO É IRREVERSÍVEL" -ForegroundColor Red
+    Write-Host ("  " + "═" * ($w - 4)) -ForegroundColor Red
+    Write-Host ""
+    Write-Host ("  Vai ser eliminado permanentemente:") -ForegroundColor White
+    Write-Host ("  $icon  {0}  [{1}]" -f $Item.FullPath, (Format-Size $Item.SizeBytes)) -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Prima  S  para CONFIRMAR definitivamente." -ForegroundColor Red
+    Write-Host "  Prima qualquer outra tecla para CANCELAR." -ForegroundColor DarkGray
+    Write-Host ""
+
+    $finalKey = [Console]::ReadKey($true)
+
+    if ($finalKey.Key -ne "S" -and $finalKey.KeyChar -ne 's') {
+        [Console]::Clear()
+        Write-Host ""
+        Write-Host "  ✔  Operação cancelada na segunda confirmação." -ForegroundColor Green
+        Write-Host ""
+        Start-Sleep -Milliseconds 1200
+        return $false
+    }
+
+    # ── Execução da eliminação ─────────────────────────────────────
+    [Console]::Clear()
+    Write-Host ""
+    Write-Host "  🗑  A eliminar: $($Item.FullPath)" -ForegroundColor Yellow
+    Write-Host ""
+
+    $success = $false
+    $errMsg  = ""
+
+    try {
+        if ($Item.IsDir) {
+            Remove-Item -LiteralPath $Item.FullPath -Recurse -Force -ErrorAction Stop
+        } else {
+            Remove-Item -LiteralPath $Item.FullPath -Force -ErrorAction Stop
+        }
+        $success = $true
+    } catch {
+        $errMsg = $_.Exception.Message
+    }
+
+    if ($success) {
+        Write-Host ("  ✅  Eliminado com sucesso: {0}" -f $Item.Name) -ForegroundColor Green
+        Write-Host ("      Espaço libertado: {0}" -f (Format-Size $Item.SizeBytes)) -ForegroundColor Green
+    } else {
+        Write-Host "  ❌  Erro ao eliminar:" -ForegroundColor Red
+        Write-Host ("      {0}" -f $errMsg) -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Dica: executa o script como Administrador se o acesso for negado." -ForegroundColor DarkGray
+    }
+
+    Write-Host ""
+    Write-Host "  Prima qualquer tecla para voltar..." -ForegroundColor DarkGray
+    [Console]::ReadKey($true) | Out-Null
+
+    return $success
+}
+
+# ══════════════════════════════════════════════════════════════════
 #  RENDERIZAÇÃO DO ECRÃ (TUI)
 # ══════════════════════════════════════════════════════════════════
 
@@ -203,7 +350,7 @@ function Draw-Screen {
 
     # ── Rodapé / Controlos ─────────────────────────────────────────
     Write-Host ("─" * $w) -ForegroundColor DarkGray
-    $controls = "  ↑↓ Navegar   ENTER Entrar/Abrir   BACKSPACE Voltar   D Mudar Drive   Q Sair"
+    $controls = "  ↑↓ Navegar   ENTER Entrar   BACKSPACE Voltar   DEL Eliminar   D Drive   Q Sair"
     if ($displayItems.Count -gt 0 -and $displayItems[$SelectedIndex].IsDir) {
         $controls += "   [ENTER → ver subpastas]"
     }
@@ -439,6 +586,42 @@ try {
                     foreach ($c in $prev.Crumbs) { $crumbs.Add($c) }
                 } else {
                     # Já no topo — nada a fazer
+                }
+            }
+
+            # ── Eliminar item selecionado ───────────────────────────
+            "Delete" {
+                $target = ($currentItems | Select-Object -First 10)[$currentSelected]
+                $deleted = Invoke-DeleteConfirmation -Item $target
+                if ($deleted) {
+                    # Atualiza a lista removendo o item eliminado e refresca tamanhos
+                    $parentPath = if ($navStack.Count -gt 0) {
+                        # Path atual = último crumb completo
+                        $crumbs[$crumbs.Count - 1]
+                    } else { $Path }
+
+                    # Reconstrói o path completo do nível atual a partir dos crumbs
+                    $scanPath = $crumbs[0]
+                    for ($ci = 1; $ci -lt $crumbs.Count; $ci++) {
+                        $scanPath = Join-Path $scanPath $crumbs[$ci]
+                    }
+
+                    [Console]::Clear()
+                    Write-Host "`n  A atualizar lista...`n" -ForegroundColor Cyan
+                    $currentItems = Get-DirectChildrenSizes -FolderPath $scanPath
+
+                    # Atualiza também o espaço da drive
+                    $driveLtr = ($Path -replace '\\.*','')
+                    try {
+                        $drv2 = Get-PSDrive -Name ($driveLtr -replace ':','') -ErrorAction SilentlyContinue
+                        if ($drv2) { $driveUsed = $drv2.Used; $driveFree = $drv2.Free }
+                    } catch { }
+
+                    # Ajusta índice se necessário
+                    $maxIdx = [Math]::Min($currentItems.Count, 10) - 1
+                    if ($currentSelected -gt $maxIdx) {
+                        $currentSelected = [Math]::Max(0, $maxIdx)
+                    }
                 }
             }
 
