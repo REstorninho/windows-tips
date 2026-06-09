@@ -5,7 +5,7 @@
     Windows Update Repair Tool
 
 .DESCRIPTION
-    Para os serviços relacionados ao Windows Update, limpa o repositório
+    Para os serviços relacionados ao Windows Update, apaga o repositório
     SoftwareDistribution, reinicia os serviços e força uma nova detecção de atualizações.
 
 .NOTES
@@ -23,9 +23,9 @@ function Write-Step {
     Write-Host ("-" * 50) -ForegroundColor DarkGray
 }
 
-function Write-Success { param([string]$Msg) Write-Host "  [OK] $Msg"    -ForegroundColor Green  }
-function Write-Warn    { param([string]$Msg) Write-Host "  [!!] $Msg"    -ForegroundColor Yellow }
-function Write-Fail    { param([string]$Msg) Write-Host "  [ERRO] $Msg"  -ForegroundColor Red    }
+function Write-Success { param([string]$Msg) Write-Host "  [OK]   $Msg" -ForegroundColor Green  }
+function Write-Warn    { param([string]$Msg) Write-Host "  [!!]   $Msg" -ForegroundColor Yellow }
+function Write-Fail    { param([string]$Msg) Write-Host "  [ERRO] $Msg" -ForegroundColor Red    }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Header
@@ -59,43 +59,27 @@ foreach ($svc in $services) {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# [2/4] Limpar repositório SoftwareDistribution
+# [2/4] Apagar repositório SoftwareDistribution
 # ──────────────────────────────────────────────────────────────────────────────
 
-Write-Step "2/4" "A limpar o repositório SoftwareDistribution..."
+Write-Step "2/4" "A apagar o repositório SoftwareDistribution..."
 
-$sdPath    = "$env:SystemRoot\SoftwareDistribution"
-$sdOldPath = "$env:SystemRoot\SoftwareDistribution.old"
+$foldersToDelete = @(
+    "$env:SystemRoot\SoftwareDistribution.old",
+    "$env:SystemRoot\SoftwareDistribution"
+)
 
-# Remove backup antigo se existir
-if (Test-Path $sdOldPath) {
-    try {
-        Remove-Item -Path $sdOldPath -Recurse -Force -ErrorAction Stop
-        Write-Success "Backup antigo '$sdOldPath' removido."
-    } catch {
-        Write-Warn "Não foi possível remover o backup antigo: $($_.Exception.Message)"
-    }
-}
-
-# Renomeia a pasta actual como backup
-if (Test-Path $sdPath) {
-    try {
-        Rename-Item -Path $sdPath -NewName "SoftwareDistribution.old" -Force -ErrorAction Stop
-        Write-Success "'$sdPath' renomeado para SoftwareDistribution.old."
-    } catch {
-        Write-Fail "Não foi possível renomear '$sdPath': $($_.Exception.Message)"
-
-        # Fallback: tenta apagar directamente
-        Write-Warn "A tentar remoção directa como fallback..."
+foreach ($folder in $foldersToDelete) {
+    if (Test-Path $folder) {
         try {
-            Remove-Item -Path $sdPath -Recurse -Force -ErrorAction Stop
-            Write-Success "'$sdPath' removido directamente."
+            Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
+            Write-Success "'$folder' apagado com sucesso."
         } catch {
-            Write-Fail "Falhou o fallback: $($_.Exception.Message)"
+            Write-Fail "Não foi possível apagar '$folder': $($_.Exception.Message)"
         }
+    } else {
+        Write-Warn "'$folder' não encontrada. Nada a apagar."
     }
-} else {
-    Write-Warn "Pasta '$sdPath' não encontrada. Nada a limpar."
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -120,8 +104,9 @@ foreach ($svc in $services) {
 Write-Step "4/4" "A forçar detecção de atualizações..."
 
 try {
-    # wuauclt legado (funciona em todas as versões)
+    # wuauclt legado (compatível com todas as versões)
     Start-Process -FilePath "wuauclt.exe" -ArgumentList "/detectnow" -NoNewWindow
+    Write-Success "wuauclt.exe /detectnow disparado."
 
     # UsoClient (Windows 10/11 e Server 2016+) — mais fiável
     $usoClient = "$env:SystemRoot\System32\UsoClient.exe"
@@ -129,8 +114,6 @@ try {
         Start-Process -FilePath $usoClient -ArgumentList "StartScan" -NoNewWindow
         Write-Success "UsoClient.exe StartScan disparado."
     }
-
-    Write-Success "wuauclt.exe /detectnow disparado."
 } catch {
     Write-Fail "Erro ao forçar detecção: $($_.Exception.Message)"
 }
