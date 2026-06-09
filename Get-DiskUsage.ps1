@@ -15,11 +15,13 @@
 .EXAMPLE
     .\Get-DiskUsage.ps1              # Abre seletor de drives
     .\Get-DiskUsage.ps1 -Path "D:\" # Vai direto para D:\
+    .\Get-DiskUsage.ps1 -Debug      # Ativa overlay de debug de teclas (mostra Key/KeyChar/Modifiers)
 #>
 
 [CmdletBinding()]
 param(
-    [string]$Path = ""   # Se vazio, abre o seletor de drives
+    [string]$Path  = "",    # Se vazio, abre o seletor de drives
+    [switch]$Debug          # Ativa overlay de debug de teclas em tempo real
 )
 
 # ══════════════════════════════════════════════════════════════════
@@ -527,21 +529,32 @@ try {
 
         $key = [Console]::ReadKey($true)
 
+        # ── DEBUG overlay ───────────────────────────────────────────
+        if ($Debug) {
+            $dbgLine = "  [DEBUG] Key={0,-20} KeyChar='{1}'  Modifiers={2}" -f `
+                $key.Key, $key.KeyChar, $key.Modifiers
+            $savedTop  = [Console]::CursorTop
+            $savedLeft = [Console]::CursorLeft
+            [Console]::SetCursorPosition(0, [Console]::WindowHeight - 2)
+            Write-Host ($dbgLine.PadRight([Console]::WindowWidth - 1)) -ForegroundColor Magenta -NoNewline
+            [Console]::SetCursorPosition($savedLeft, $savedTop)
+        }
+
         switch ($key.Key) {
 
             # ── Navegar para baixo ──────────────────────────────────
-            "DownArrow" {
+            { $_ -eq "DownArrow" } {
                 $max = [Math]::Min($currentItems.Count, 10) - 1
                 if ($currentSelected -lt $max) { $currentSelected++ }
             }
 
             # ── Navegar para cima ───────────────────────────────────
-            "UpArrow" {
+            { $_ -eq "UpArrow" } {
                 if ($currentSelected -gt 0) { $currentSelected-- }
             }
 
             # ── Entrar na pasta / mostrar ficheiro ──────────────────
-            "Enter" {
+            { $_ -eq "Enter" } {
                 $selected = ($currentItems | Select-Object -First 10)[$currentSelected]
                 if ($selected.IsDir) {
                     # Guarda estado atual na stack
@@ -590,7 +603,7 @@ try {
             }
 
             # ── Eliminar item selecionado ───────────────────────────
-            "Delete" {
+            { $_ -eq "Delete" } {
                 $target = ($currentItems | Select-Object -First 10)[$currentSelected]
                 $deleted = Invoke-DeleteConfirmation -Item $target
                 if ($deleted) {
