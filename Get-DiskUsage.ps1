@@ -15,13 +15,13 @@
 .EXAMPLE
     .\Get-DiskUsage.ps1              # Abre seletor de drives
     .\Get-DiskUsage.ps1 -Path "D:\" # Vai direto para D:\
-    .\Get-DiskUsage.ps1 -Debug      # Ativa overlay de debug de teclas (mostra Key/KeyChar/Modifiers)
+    .\Get-DiskUsage.ps1 -DebugMode  # Ativa overlay de debug de teclas (mostra Key/KeyChar/Modifiers)
 #>
 
 [CmdletBinding()]
 param(
     [string]$Path  = "",    # Se vazio, abre o seletor de drives
-    [switch]$Debug          # Ativa overlay de debug de teclas em tempo real
+    [switch]$DebugMode      # Ativa overlay de debug de teclas em tempo real
 )
 
 # ══════════════════════════════════════════════════════════════════
@@ -530,7 +530,7 @@ try {
         $key = [Console]::ReadKey($true)
 
         # ── DEBUG overlay ───────────────────────────────────────────
-        if ($Debug) {
+        if ($DebugMode) {
             $dbgLine = "  [DEBUG] Key={0,-20} KeyChar='{1}'  Modifiers={2}" -f `
                 $key.Key, $key.KeyChar, $key.Modifiers
             $savedTop  = [Console]::CursorTop
