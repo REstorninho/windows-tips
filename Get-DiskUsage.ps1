@@ -1,24 +1,25 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Explorador interativo de uso de disco com navegação por teclado.
+    Explorador interativo de uso de disco com seleção de drive e navegação por teclado.
 
 .DESCRIPTION
-    Analisa o disco, apresenta o Top 10 de pastas por tamanho e permite navegar
-    recursivamente com as setas ↑↓, ENTER para entrar, BACKSPACE para voltar atrás,
-    até aos ficheiros individuais. Interface TUI no terminal.
+    Ao iniciar apresenta um seletor de drives (todas as partições disponíveis com info
+    de espaço usado/livre). Após escolha, analisa e apresenta o Top 10 de pastas/ficheiros
+    por tamanho. Permite navegar recursivamente com ↑↓, ENTER para entrar, BACKSPACE para
+    recuar, e D para mudar de drive a qualquer momento.
 
 .PARAMETER Path
-    Caminho raiz a analisar. Por defeito C:\
+    (Opcional) Caminho raiz a analisar diretamente, saltando o seletor de drives.
 
 .EXAMPLE
-    .\Get-DiskUsage.ps1
-    .\Get-DiskUsage.ps1 -Path "D:\"
+    .\Get-DiskUsage.ps1              # Abre seletor de drives
+    .\Get-DiskUsage.ps1 -Path "D:\" # Vai direto para D:\
 #>
 
 [CmdletBinding()]
 param(
-    [string]$Path = "C:\"
+    [string]$Path = ""   # Se vazio, abre o seletor de drives
 )
 
 # ══════════════════════════════════════════════════════════════════
@@ -202,7 +203,7 @@ function Draw-Screen {
 
     # ── Rodapé / Controlos ─────────────────────────────────────────
     Write-Host ("─" * $w) -ForegroundColor DarkGray
-    $controls = "  ↑↓ Navegar   ENTER Entrar/Abrir   BACKSPACE Voltar atrás   Q Sair"
+    $controls = "  ↑↓ Navegar   ENTER Entrar/Abrir   BACKSPACE Voltar   D Mudar Drive   Q Sair"
     if ($displayItems.Count -gt 0 -and $displayItems[$SelectedIndex].IsDir) {
         $controls += "   [ENTER → ver subpastas]"
     }
@@ -211,17 +212,145 @@ function Draw-Screen {
 }
 
 # ══════════════════════════════════════════════════════════════════
+#  ECRÃ DE SELEÇÃO DE DRIVE
+# ══════════════════════════════════════════════════════════════════
+
+function Show-DrivePicker {
+    # Recolhe todas as drives fixas, removíveis e de rede
+    $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object {
+        $_.Root -ne "" -and (Test-Path $_.Root -ErrorAction SilentlyContinue)
+    }
+
+    # Enriquece com info do WMI (label, tipo)
+    $driveList = foreach ($drv in $drives) {
+        $letter = $drv.Name                          # ex: C
+        $root   = $drv.Root                          # ex: C:\
+        $used   = $drv.Used
+        $free   = $drv.Free
+        $total  = $used + $free
+
+        # Tenta obter label e tipo via WMI
+        $wmi = $null
+        try {
+            $wmi = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='${letter}:'" -ErrorAction SilentlyContinue
+        } catch { }
+
+        $label    = if ($wmi -and $wmi.VolumeName) { $wmi.VolumeName } else { "(sem rótulo)" }
+        $driveType = switch ($wmi.DriveType) {
+            2  { "Amovível  " }
+            3  { "Disco Local" }
+            4  { "Rede      " }
+            5  { "CD/DVD    " }
+            6  { "Disco RAM " }
+            default { "Desconhecido" }
+        }
+
+        [PSCustomObject]@{
+            Letter    = $letter
+            Root      = $root
+            Label     = $label
+            DriveType = $driveType
+            Used      = $used
+            Free      = $free
+            Total     = $total
+        }
+    }
+
+    $driveArr = @($driveList)
+    $sel      = 0
+
+    [Console]::CursorVisible = $false
+
+    while ($true) {
+        [Console]::Clear()
+        $w = [Console]::WindowWidth
+        if ($w -lt 80) { $w = 80 }
+
+        # Cabeçalho
+        $title = " DISK USAGE EXPLORER — Selecionar Drive "
+        $pad   = [Math]::Max(0, [Math]::Floor(($w - $title.Length) / 2))
+        Write-Host ("═" * $w) -ForegroundColor DarkCyan
+        Write-Host (" " * $pad + $title) -ForegroundColor Cyan
+        Write-Host ("═" * $w) -ForegroundColor DarkCyan
+        Write-Host ""
+
+        # Coluna header
+        Write-Host ("  {0,-4}  {1,-14}  {2,-16}  {3,12}  {4,12}  {5,12}  {6}" -f `
+            "DRV", "TIPO", "RÓTULO", "TOTAL", "USADO", "LIVRE", "UTILIZAÇÃO") -ForegroundColor DarkGray
+        Write-Host ("  " + "─" * ($w - 4)) -ForegroundColor DarkGray
+
+        for ($i = 0; $i -lt $driveArr.Count; $i++) {
+            $d        = $driveArr[$i]
+            $isActive = ($i -eq $sel)
+
+            # Barra de utilização (20 chars)
+            $pct    = if ($d.Total -gt 0) { $d.Used / $d.Total * 100 } else { 0 }
+            $barW   = 20
+            $filled = [Math]::Round($pct / 100 * $barW)
+            $bar    = ("█" * $filled) + ("░" * ($barW - $filled))
+            $pctStr = "{0:N0}%" -f $pct
+
+            $barColor = if ($pct -ge 90) { "Red" } elseif ($pct -ge 70) { "Yellow" } else { "Green" }
+
+            $line = "  {0,-4}  {1,-14}  {2,-16}  {3,12}  {4,12}  {5,12}  " -f `
+                ($d.Letter + ":\"),
+                $d.DriveType,
+                $d.Label,
+                (Format-Size $d.Total),
+                (Format-Size $d.Used),
+                (Format-Size $d.Free)
+
+            if ($isActive) {
+                Write-Host $line -BackgroundColor DarkCyan -ForegroundColor White -NoNewline
+                Write-Host ("[{0}] {1,4}" -f $bar, $pctStr) -BackgroundColor DarkCyan -ForegroundColor $barColor
+            } else {
+                Write-Host $line -ForegroundColor White -NoNewline
+                Write-Host ("[{0}] {1,4}" -f $bar, $pctStr) -ForegroundColor $barColor
+            }
+        }
+
+        Write-Host ""
+        Write-Host ("  " + "─" * ($w - 4)) -ForegroundColor DarkGray
+        Write-Host "  ↑↓ Selecionar   ENTER Confirmar   Q Sair" -ForegroundColor DarkGray
+        Write-Host ("═" * $w) -ForegroundColor DarkCyan
+
+        $key = [Console]::ReadKey($true)
+        switch ($key.Key) {
+            "DownArrow" { if ($sel -lt ($driveArr.Count - 1)) { $sel++ } }
+            "UpArrow"   { if ($sel -gt 0) { $sel-- } }
+            "Enter"     {
+                [Console]::CursorVisible = $false
+                return $driveArr[$sel]
+            }
+            { $_ -eq "Q" -or $_ -eq "Escape" } {
+                [Console]::CursorVisible = $true
+                [Console]::Clear()
+                exit 0
+            }
+        }
+    }
+}
+
+# ══════════════════════════════════════════════════════════════════
 #  LOOP PRINCIPAL DE NAVEGAÇÃO
 # ══════════════════════════════════════════════════════════════════
 
-# Info da unidade (drive letter)
-$driveLetter = ($Path -replace '\\.*','')
-$driveUsed   = 0L
-$driveFree   = 0L
-try {
-    $drv = Get-PSDrive -Name ($driveLetter -replace ':','') -ErrorAction SilentlyContinue
-    if ($drv) { $driveUsed = $drv.Used; $driveFree = $drv.Free }
-} catch { }
+# Se não foi passado -Path, abre o seletor de drives
+if ($Path -eq "") {
+    $chosenDrive = Show-DrivePicker
+    $Path        = $chosenDrive.Root
+    $driveUsed   = $chosenDrive.Used
+    $driveFree   = $chosenDrive.Free
+} else {
+    # Path fornecido via parâmetro — obtém info da drive normalmente
+    $driveLetter = ($Path -replace '\\.*','')
+    $driveUsed   = 0L
+    $driveFree   = 0L
+    try {
+        $drv = Get-PSDrive -Name ($driveLetter -replace ':','') -ErrorAction SilentlyContinue
+        if ($drv) { $driveUsed = $drv.Used; $driveFree = $drv.Free }
+    } catch { }
+}
 
 # Stack de navegação: cada entrada tem @{ Path; Items; SelectedIndex }
 $navStack  = [System.Collections.Generic.Stack[hashtable]]::new()
@@ -311,6 +440,23 @@ try {
                 } else {
                     # Já no topo — nada a fazer
                 }
+            }
+
+            # ── Mudar de drive ──────────────────────────────────────
+            { $_ -eq "D" } {
+                $chosenDrive  = Show-DrivePicker
+                $Path         = $chosenDrive.Root
+                $driveUsed    = $chosenDrive.Used
+                $driveFree    = $chosenDrive.Free
+
+                $navStack.Clear()
+                $crumbs.Clear()
+                $crumbs.Add($Path.TrimEnd('\'))
+
+                [Console]::Clear()
+                Write-Host "`n  A analisar $Path — aguarde...`n" -ForegroundColor Cyan
+                $currentItems    = Get-DirectChildrenSizes -FolderPath $Path
+                $currentSelected = 0
             }
 
             # ── Sair ────────────────────────────────────────────────
