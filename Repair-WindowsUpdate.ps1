@@ -84,25 +84,32 @@ $foldersToDelete = @(
 )
 
 foreach ($folder in $foldersToDelete) {
-    if (Test-Path $folder) {
+    if (-not (Test-Path $folder)) {
+        Write-Warn "'$folder' não encontrada. Nada a apagar."
+        continue
+    }
+
+    # Tentativa 1 — remoção directa
+    $removed = $false
+    try {
+        Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
+        Write-Success "'$folder' apagado com sucesso."
+        $removed = $true
+    } catch {
+        Write-Warn "Remoção directa falhou ($($_.Exception.Message)) — a tentar takeown + icacls..."
+    }
+
+    # Tentativa 2 — takeown/icacls como fallback (só se a tentativa 1 falhou)
+    if (-not $removed) {
+        $null = & takeown.exe /F $folder /R /D Y 2>&1
+        $null = & icacls.exe $folder /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
         try {
             Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
-            Write-Success "'$folder' apagado com sucesso."
+            Write-Success "'$folder' apagado via takeown."
         } catch {
-            Write-Warn "Remoção directa falhou — a tentar takeown + icacls como fallback..."
-            try {
-                # Toma posse recursiva da pasta e concede controlo total ao Administrador
-                $null = & takeown.exe /F $folder /R /D Y 2>&1
-                $null = & icacls.exe $folder /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
-                Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
-                Write-Success "'$folder' apagado via takeown."
-            } catch {
-                Write-Fail "Não foi possível apagar '$folder' mesmo após takeown: $($_.Exception.Message)"
-                Write-Warn "Tenta reiniciar o sistema e correr novamente, ou apagar manualmente em modo de segurança."
-            }
+            Write-Fail "Não foi possível apagar '$folder' mesmo após takeown: $($_.Exception.Message)"
+            Write-Warn "Reinicia o sistema e corre novamente, ou apaga manualmente em modo de segurança."
         }
-    } else {
-        Write-Warn "'$folder' não encontrada. Nada a apagar."
     }
 }
 
